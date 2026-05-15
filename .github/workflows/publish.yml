@@ -1,0 +1,163 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+jobs:
+  verify:
+    name: Pre-publish verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test all features
+        run: cargo test --workspace --all-features
+
+      - name: Test no_std crates
+        run: cargo test -p scenix-math -p scenix-core -p scenix-input --no-default-features
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-features -- -D warnings
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Build docs
+        run: cargo doc --workspace --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+      # - name: Publish dry run
+      #   run: |
+      #     cargo publish -p scenix-math --dry-run --no-verify
+      #     cargo publish -p scenix-core --dry-run --no-verify
+      #     cargo publish -p scenix-input --dry-run --no-verify
+      #     cargo publish -p scenix --dry-run --no-verify
+
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: verify
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-publish-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-publish-
+            ${{ runner.os }}-cargo-
+
+      - name: Publish crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          publish_crate() {
+            crate="$1"
+            log="publish-${crate}.log"
+
+            cargo publish -p "$crate" --dry-run
+
+            set +e
+            cargo publish -p "$crate" --token "$CARGO_REGISTRY_TOKEN" 2>&1 | tee "$log"
+            status="${PIPESTATUS[0]}"
+            set -e
+
+            if [ "$status" -eq 0 ]; then
+              return 0
+            fi
+
+            if grep -Eiq "already uploaded|already exists|crate version .* is already uploaded" "$log"; then
+              echo "$crate is already published for this version; continuing."
+              return 0
+            fi
+
+            echo "Publishing $crate failed." >&2
+            exit "$status"
+          }
+
+          for crate in \
+            scenix-math \
+            scenix-core \
+            scenix-input \
+            scenix
+          do
+            publish_crate "$crate"
+            if [ "$crate" != "scenix" ]; then
+              sleep 30
+            fi
+          done
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [publish]
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          echo "TAG=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.TAG }}
+          name: "scenix ${{ steps.version.outputs.TAG }}"
+          body: |
+            ## scenix ${{ steps.version.outputs.TAG }}
+
+            ### Install
+
+            ```toml
+            [dependencies]
+            scenix = "${{ steps.version.outputs.VERSION }}"
+            ```
+
+            ### Crates published to crates.io
+
+            | Crate | Version | Description |
+            |-------|---------|-------------|
+            | [`scenix-math`](https://crates.io/crates/scenix-math) | `${{ steps.version.outputs.VERSION }}` | Custom no_std 3D math primitives |
+            | [`scenix-core`](https://crates.io/crates/scenix-core) | `${{ steps.version.outputs.VERSION }}` | Shared IDs, colors, errors, and traits |
+            | [`scenix-input`](https://crates.io/crates/scenix-input) | `${{ steps.version.outputs.VERSION }}` | Platform-agnostic input state types |
+            | [`scenix`](https://crates.io/crates/scenix) | `${{ steps.version.outputs.VERSION }}` | Facade crate for scenix Foundation APIs |
+
+            ### Verification
+
+            - `cargo test --workspace --all-features`
+            - `cargo clippy --workspace --all-features -- -D warnings`
+            - `cargo fmt --check`
+            - `cargo doc --workspace --all-features --no-deps`
+            - `cargo publish --dry-run` for every crate before publish
+          draft: false
+          prerelease: false

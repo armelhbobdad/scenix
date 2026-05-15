@@ -1,0 +1,23 @@
+[package]
+name = "scenix"
+description = "Facade crate for the scenix v0.1.0 Foundation APIs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+
+[features]
+default = ["std"]
+std = ["scenix-math/std", "scenix-core/std", "scenix-input/std"]
+libm = ["scenix-math/libm"]
+serde = ["scenix-math/serde", "scenix-core/serde", "scenix-input/serde"]
+approx = ["scenix-math/approx"]
+gpu = ["scenix-core/gpu"]
+
+[dependencies]
+scenix-core = { workspace = true }
+scenix-input = { workspace = true }
+scenix-math = { workspace = true }

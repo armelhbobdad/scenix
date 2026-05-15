@@ -1,0 +1,24 @@
+[package]
+name = "scenix-core"
+description = "Shared IDs, colors, errors, and traits for the scenix rendering library."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+
+[features]
+default = ["std"]
+std = ["scenix-math/std"]
+serde = ["dep:serde", "scenix-math/serde"]
+gpu = ["dep:bytemuck"]
+
+[dependencies]
+bytemuck = { workspace = true, optional = true }
+scenix-math = { workspace = true }
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
